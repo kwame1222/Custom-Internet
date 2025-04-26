@@ -68,6 +68,17 @@ CONFIG = {
 | `SSH_PORT`          | The “internal” SSH port used by Paramiko once the tunnel is established (often 22, but can differ depending on the setup).|
 | `PAYLOAD_TEMPLATE`  | The HTTP/WebSocket upgrade string. `[host]` is replaced by `TARGET_HOST:TARGET_PORT`; `[crlf]` is replaced by `\r\n`.     |
 
+### Modes
+
+┌──────────────┬────────────────────────────────────────────────────────────────────┐
+│ direct       │ TCP straight to TARGET_HOST:TARGET_PORT                           │
+│ http_payload │ Current default: plain-TCP to PROXY_HOST, custom HTTP/WS payload  │
+│ sni_fronted  │ TLS to PROXY_HOST with SNI=FRONT_DOMAIN, then HTTP/WS payload     │
+└──────────────┴────────────────────────────────────────────────────────────────────┘
+
+Set `MODE` and, for `sni_fronted`, also `FRONT_DOMAIN` in `config.py`.
+
+
 ## Installation & Dependencies
 
 - **Python 3.7+** recommended

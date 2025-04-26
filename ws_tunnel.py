@@ -1,77 +1,125 @@
-import socket
+from __future__ import annotations
 
-def replace_placeholders(payload, target_host, target_port):
+import socket
+import ssl
+from typing import Optional
+
+
+# --------------------------------------------------------------------------- #
+#                               Helper utilities                              #
+# --------------------------------------------------------------------------- #
+def replace_placeholders(payload: str, target_host: str, target_port: int) -> bytes:
     """
-    Replace [host] with 'target_host:target_port'
-    and [crlf] with '\r\n' in the payload template.
-    Return as bytes.
+    Swap **[host]** ➜ “target_host:target_port” and **[crlf]** ➜ “\\r\\n”
+    inside *payload*.
     """
     host_value = f"{target_host}:{target_port}"
-    payload = payload.replace("[host]", host_value)
-    payload = payload.replace("[crlf]", "\r\n")
+    payload = payload.replace("[host]", host_value).replace("[crlf]", "\r\n")
     return payload.encode()
 
-def read_headers(sock):
+
+def read_headers(sock: socket.socket) -> bytes:
     """
-    Read from 'sock' until we reach a blank line (\r\n\r\n).
-    Return the full headers as bytes, including the final \r\n\r\n.
+    Read from *sock* until a blank line (\\r\\n\\r\\n) is reached and return
+    the full header block (including the delimiter).
     """
-    response = b""
-    while b"\r\n\r\n" not in response:
+    data = b""
+    while b"\r\n\r\n" not in data:
         chunk = sock.recv(1)
         if not chunk:
             break
-        response += chunk
-    return response
+        data += chunk
+    return data
 
-def establish_ws_tunnel(proxy_host, proxy_port, target_host, target_port, payload_template):
+
+# --------------------------------------------------------------------------- #
+#                              Public entry point                              #
+# --------------------------------------------------------------------------- #
+def establish_ws_tunnel(
+    *,
+    proxy_host: str,
+    proxy_port: int,
+    target_host: str,
+    target_port: int,
+    payload_template: str,
+    use_tls: bool = False,
+    sock: Optional[socket.socket] = None,
+) -> socket.socket:
     """
-    Connect to the proxy, perform the WebSocket (or HTTP) handshake to
-    get a raw TCP tunnel, then return the connected socket.
-    Raise an exception on failure.
+    Perform the upgrade handshake and return a ready-for-SSH socket.
+
+    Parameters
+    ----------
+    proxy_host / proxy_port
+        TCP endpoint we dial *first* (often 80 or 443 on a CDN edge).
+    target_host / target_port
+        Host:port ultimately placed in the Host header via `[host]`.
+    payload_template
+        One or more HTTP request blocks separated by blank lines, using the
+        placeholders above.
+    use_tls
+        If *True* a new connection is wrapped in TLS with SNI = proxy_host.
+        Ignored if *sock* is already provided.
+    sock
+        A *pre-connected* socket (possibly already TLS-wrapped).  This is how
+        SNI-fronted or custom transports inject their own socket.
+
+    Notes
+    -----
+    • The function is idempotent w.r.t. TLS – if `sock` is already an
+      `ssl.SSLSocket`, a second wrap is skipped even if `use_tls=True`.
+    • Caller owns lifecycle: close `sock` yourself when finished.
     """
-    # 1. Create a TCP socket to the proxy
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.connect((proxy_host, proxy_port))
+    # ------------------------------------------------------------------ #
+    # 1. Connect or re-use an existing socket
+    # ------------------------------------------------------------------ #
+    if sock is None:
+        sock = socket.create_connection((proxy_host, proxy_port))
 
-    # 2. Construct the handshake payload
-    payload = replace_placeholders(payload_template, target_host, target_port)
-    # Possibly there are multiple "blocks" separated by double-CRLF
-    payload_parts = payload.split(b"\r\n\r\n")
+    # Optional TLS upgrade (skip if it’s already SSL)
+    if use_tls and not isinstance(sock, ssl.SSLSocket):
+        ctx = ssl.create_default_context()
+        sock = ctx.wrap_socket(sock, server_hostname=proxy_host)
 
-    # 3. Send the first block
-    sock.sendall(payload_parts[0] + b"\r\n\r\n")
+    # ------------------------------------------------------------------ #
+    # 2. Build payload blocks
+    # ------------------------------------------------------------------ #
+    payload_bytes = replace_placeholders(payload_template, target_host, target_port)
+    blocks = payload_bytes.split(b"\r\n\r\n")
 
-    # 4. Read first response (should hopefully see "100 Continue" if the server uses it)
-    first_resp = read_headers(sock)
-    # Debug info
-    print(">> First response:\n", first_resp.decode("latin1", errors="replace"), flush=True)
+    # ------------------------------------------------------------------ #
+    # 3. Send first block
+    # ------------------------------------------------------------------ #
+    sock.sendall(blocks[0] + b"\r\n\r\n")
 
-    if b"100 Continue" in first_resp:
-        # 5. If "100 Continue," send the remaining blocks
-        for part in payload_parts[1:]:
-            if part.strip():
-                sock.sendall(part + b"\r\n\r\n")
+    # ------------------------------------------------------------------ #
+    # 4. Read first response
+    # ------------------------------------------------------------------ #
+    first = read_headers(sock)
+    print(">> First response:\n", first.decode("latin1", errors="replace"), flush=True)
 
-        # 6. Read second response (should be "101 Switching Protocols" or the final handshake)
-        second_resp = read_headers(sock)
-        print(">> Second response:\n", second_resp.decode("latin1", errors="replace"), flush=True)
-
+    # ------------------------------------------------------------------ #
+    # 5. If 100-Continue, send remaining blocks, else send them anyway
+    # ------------------------------------------------------------------ #
+    if b"100 Continue" in first:
+        for blk in blocks[1:]:
+            if blk.strip():
+                sock.sendall(blk + b"\r\n\r\n")
+        second = read_headers(sock)
+        label = "Second response"
     else:
-        # If no 100 Continue, maybe we just send all at once
-        # or maybe the handshake is complete. This depends on your server's behavior.
-        if len(payload_parts) > 1:
-            for part in payload_parts[1:]:
-                if part.strip():
-                    sock.sendall(part + b"\r\n\r\n")
+        # Some servers skip 100-Continue; we still must flush any extras.
+        if len(blocks) > 1:
+            for blk in blocks[1:]:
+                if blk.strip():
+                    sock.sendall(blk + b"\r\n\r\n")
+        second = read_headers(sock)
+        label = "Second response (no 100-Continue path)"
 
-        # Optionally read next response
-        second_resp = read_headers(sock)
-        print(">> Second response (no 100 Continue path):\n",
-              second_resp.decode("latin1", errors="replace"), flush=True)
+    print(f">> {label}:\n", second.decode("latin1", errors="replace"), flush=True)
 
-    # If we got here, we assume the tunnel is "upgraded" to raw.
-    # Some servers give "101 Switching Protocols," others do different things.
-    # We won't parse it strictly. We'll just proceed.
-    print("[*] WebSocket handshake done. Returning raw socket.")
+    # ------------------------------------------------------------------ #
+    # 6. Tunnel is live
+    # ------------------------------------------------------------------ #
+    print("[*] WebSocket handshake complete – returning raw socket.")
     return sock

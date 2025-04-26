@@ -1,6 +1,9 @@
 # config.py
 
 CONFIG = {
+    'MODE': 'http_payload',        #  direct | http_payload | sni_fronted
+                                    #  default keeps today’s behaviour
+    'FRONT_DOMAIN': '',            #  used only in sni_fronted
     # The local port on which we will run a SOCKS proxy
     'LOCAL_SOCKS_PORT': 1080,
 

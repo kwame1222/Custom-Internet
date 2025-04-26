@@ -1,8 +1,7 @@
 import time
 from config import CONFIG
-from ws_tunnel import establish_ws_tunnel
+from tunnel_strategies import get_strategy
 from ssh_connector import connect_via_ws_and_start_socks
-
 def main():
     """
     1) Use ws_tunnel to do the WebSocket handshake with the remote proxy.
@@ -11,20 +10,15 @@ def main():
     4) Sleep or wait forever so it doesn't exit.
     """
     try:
-        ws_sock = establish_ws_tunnel(
-            proxy_host=CONFIG['PROXY_HOST'],
-            proxy_port=CONFIG['PROXY_PORT'],
-            target_host=CONFIG['TARGET_HOST'],
-            target_port=CONFIG['TARGET_PORT'],
-            payload_template=CONFIG['PAYLOAD_TEMPLATE']
-        )
+        strategy_cls = get_strategy(CONFIG['MODE'])
+        ws_sock      = strategy_cls(CONFIG).establish()
 
         ssh_connection = connect_via_ws_and_start_socks(
-            ws_socket=ws_sock,
-            ssh_user=CONFIG['SSH_USERNAME'],
-            ssh_password=CONFIG['SSH_PASSWORD'],
-            ssh_port=CONFIG['SSH_PORT'],
-            local_socks_port=CONFIG['LOCAL_SOCKS_PORT']
+            ws_socket       = ws_sock,
+            ssh_user        = CONFIG['SSH_USERNAME'],
+            ssh_password    = CONFIG['SSH_PASSWORD'],
+            ssh_port        = CONFIG['SSH_PORT'],
+            local_socks_port= CONFIG['LOCAL_SOCKS_PORT'],
         )
 
         print(f"[+] SOCKS proxy up on 127.0.0.1:{CONFIG['LOCAL_SOCKS_PORT']}")
