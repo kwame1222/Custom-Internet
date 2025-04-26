@@ -1,4 +1,6 @@
-# SSH-over-WebSocket with SOCKS Proxy (Supports payloads & SNI fronting)
+# CUSTOM FREEDOM INTERNET TOOL (CFIT - Custom-Internet)
+free-internet tool. For all.
+## SSH-over-WebSocket with SOCKS Proxy (Supports payloads & SNI fronting)
 
 This project demonstrates tunneling SSH through a WebSocket “proxy” endpoint, then exposing a local SOCKS4/5 proxy. Applications can connect to `127.0.0.1:1080` (by default), and all traffic is forwarded over SSH via a remote WebSocket gateway. It now supports three tunnel modes (direct, HTTP payload, and SNI domain fronting) for maximum flexibility.
 
