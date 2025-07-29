@@ -19,8 +19,8 @@ CONFIG = {
     # but your WebSocket endpoint is 80. Typically, once the WS upgrade is done,
     # the traffic goes to SSH on the far side. We'll use Paramiko to speak SSH
     # across that raw connection.
-    'SSH_USERNAME': '',
-    'SSH_PASSWORD': '',
+    'SSH_USERNAME': 'justice',
+    'SSH_PASSWORD': 'kayy',
     'SSH_PORT': ,  # The "internal" SSH port if needed by Paramiko handshake
 
     # The WebSocket handshake payload. This is the multi-step handshake
